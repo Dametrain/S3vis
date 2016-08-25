@@ -1,0 +1,758 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "(SO00005) S3 Storage Class Advisor",
+    "Metadata": {
+        "AWS::CloudFormation::Interface": {
+            "ParameterGroups": [
+                {
+                    "Label": {
+                        "default": "Bucket Setup"
+                    },
+                    "Parameters": [
+                        "S3Bucket",
+                        "S3LogBucket",
+                        "S3LogPrefix",
+                        "S3OutputBucket",
+                        "PrefixLevel",
+                        "TimePeriod"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "EMR Cluster Setup"
+                    },
+                    "Parameters": [
+                        "EMRCoreInstanceCount",
+                        "EMRMasterInstanceType",
+                        "EMRCoreInstanceType",
+                        "SubnetID",
+                        "EMRKeypairName"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Notification Setup"
+                    },
+                    "Parameters": [
+                        "SNSTopicName"
+                    ]
+                }
+            ]
+        }
+    },
+    "Parameters": {
+        "S3OutputBucket": {
+            "Description": "Creates a bucket where the results will be uploaded (Follow 'Rules for Bucket Naming')",
+            "Type": "String"
+        },
+        "PrefixLevel": {
+            "Description": "Level at which you would like to analyze bucket contents (leave as default value if you are unsure)",
+            "Type": "Number",
+            "Default": "0"
+        },
+        "SubnetID": {
+            "Description": "Subnet into which the EMR cluster will be provisioned",
+            "Type": "AWS::EC2::Subnet::Id"
+        },
+        "EMRCoreInstanceCount": {
+            "Description": "Number of compute nodes in the EMR Cluster",
+            "Type": "Number",
+            "Default": "2"
+        },
+        "EMRKeypairName": {
+            "Description": "Keypair for the EMR Cluster",
+            "Type": "AWS::EC2::KeyPair::KeyName"
+        },
+        "EMRCoreInstanceType": {
+            "Description": "EMR Cluster Core Instance Type",
+            "Type": "String",
+            "Default": "m3.xlarge",
+            "AllowedValues": [
+                "m3.xlarge",
+                "m3.2xlarge",
+                "m4.large",
+                "m4.xlarge",
+                "m4.2xlarge",
+                "m4.4xlarge",
+                "m4.10xlarge"
+            ]
+        },
+        "EMRMasterInstanceType": {
+            "Description": "EMR Master Instance Type",
+            "Type": "String",
+            "Default": "m3.xlarge",
+            "AllowedValues": [
+                "m3.xlarge",
+                "m3.2xlarge",
+                "m4.large",
+                "m4.xlarge",
+                "m4.2xlarge",
+                "m4.4xlarge",
+                "m4.10xlarge"
+            ]
+        },
+        "S3Bucket": {
+            "Description": "Name of the S3 bucket to be analyzed (<bucketname>)",
+            "Type": "String"
+        },
+        "S3LogBucket": {
+            "Description": "Name of the S3 bucket to store output files (<bucketname>)",
+            "Type": "String"
+        },
+        "S3LogPrefix": {
+            "Description": "Location of target prefix of the logging bucket (<folder-name>)",
+            "Type": "String"
+        },
+        "TimePeriod": {
+            "Description": "Choose the time period that you need analyze your objects (<YYYY-MM-*>) (Default: *)",
+            "Type": "String",
+            "Default": "*"
+        },
+        "SNSTopicName": {
+            "Default": "TopicName",
+            "Description": "Name of the existing SNS Topic for alerts",
+            "Type": "String"
+        }
+    },
+    "Mappings": {},
+    "Conditions": {},
+    "Resources": {
+        "S3StorageClassAdvisorPipeline": {
+            "Type": "AWS::DataPipeline::Pipeline",
+            "Properties": {
+                "Activate": "True",
+                "Name": "Data Pipeline - S3 Storage Class Advisor",
+                "Description": "Data Pipeline - S3 Storage Class Advisor",
+                "ParameterObjects": [],
+                "ParameterValues": [],
+                "PipelineTags": [
+                    {
+                        "Key": "StackId",
+                        "Value": {
+                            "Ref": "AWS::StackId"
+                        }
+                    }
+                ],
+                "PipelineObjects": [
+                    {
+                        "Id": "StorageClassAdvisorEmrResource",
+                        "Name": "StorageClassAdvisorEmrResource",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "EmrCluster"
+                            },
+                            {
+                                "Key": "keyPair",
+                                "StringValue": {
+                                    "Ref": "EMRKeypairName"
+                                }
+                            },
+                            {
+                                "Key": "coreInstanceCount",
+                                "StringValue": {
+                                    "Ref": "EMRCoreInstanceCount"
+                                }
+                            },
+                            {
+                                "Key": "coreInstanceType",
+                                "StringValue": {
+                                    "Ref": "EMRCoreInstanceType"
+                                }
+                            },
+                            {
+                                "Key": "releaseLabel",
+                                "StringValue": "emr-4.6.0"
+                            },
+                            {
+                                "Key": "masterInstanceType",
+                                "StringValue": {
+                                    "Ref": "EMRMasterInstanceType"
+                                }
+                            },
+                            {
+                                "Key": "applications",
+                                "StringValue": "spark"
+                            },
+                            {
+                                "Key": "subnetId",
+                                "StringValue": {
+                                    "Ref": "SubnetID"
+                                }
+                            },
+                            {
+                                "Key": "resourceRole",
+                                "StringValue": {
+                                    "Ref": "S3SCADataPipelineInstanceProfile"
+                                }
+                            },
+                            {
+                                "Key": "role",
+                                "StringValue": {
+                                    "Ref": "S3SCADatapipelineRole"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "CopyJARActivity",
+                        "Name": "CopyJARActivity",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "ShellCommandActivity"
+                            },
+                            {
+                                "Key": "command",
+                                "StringValue": "aws s3 cp s3://solutions-builder-master/s3-storage-class-advisor/v1/s3metrics-assembly-0.1.20.jar /home/hadoop/"
+                            },
+                            {
+                                "Key": "runsOn",
+                                "RefValue": "StorageClassAdvisorEmrResource"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "InventoryActivity",
+                        "Name": "InventoryActivity",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "ShellCommandActivity"
+                            },
+                            {
+                                "Key": "command",
+                                "StringValue": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "spark-submit --class \"org.aws.s3metrics.App\" /home/hadoop/s3metrics-assembly-0.1.20.jar -i -ib \"",
+                                            {
+                                                "Ref": "S3Bucket"
+                                            },
+                                            "\" -ip \"/\" -d \"s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp/inventory/\"\n"
+                                        ]
+                                    ]
+                                }
+                            },
+                            {
+                                "Key": "runsOn",
+                                "RefValue": "StorageClassAdvisorEmrResource"
+                            },
+                            {
+                                "Key": "dependsOn",
+                                "RefValue": "CopyJARActivity"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "PrefixStorageActivity",
+                        "Name": "PrefixStorageActivity",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "ShellCommandActivity"
+                            },
+                            {
+                                "Key": "command",
+                                "StringValue": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "spark-submit --class \"org.aws.s3metrics.App\" /home/hadoop/s3metrics-assembly-0.1.20.jar -g -gi \"s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp/inventory/*/*\" -d \"s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp/storage-level",
+                                            {
+                                                "Ref": "PrefixLevel"
+                                            },
+                                            "d/\" -l ",
+                                            {
+                                                "Ref": "PrefixLevel"
+                                            }
+                                        ]
+                                    ]
+                                }
+                            },
+                            {
+                                "Key": "runsOn",
+                                "RefValue": "StorageClassAdvisorEmrResource"
+                            },
+                            {
+                                "Key": "dependsOn",
+                                "RefValue": "InventoryActivity"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "OpsActivity",
+                        "Name": "OpsActivity",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "ShellCommandActivity"
+                            },
+                            {
+                                "Key": "command",
+                                "StringValue": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "spark-submit --class \"org.aws.s3metrics.App\" /home/hadoop/s3metrics-assembly-0.1.20.jar -o -s \"s3://",
+                                            {
+                                                "Ref": "S3LogBucket"
+                                            },
+                                            "/",
+                                            {
+                                                "Ref": "S3LogPrefix"
+                                            },
+                                            "/",
+                                            {
+                                                "Ref": "TimePeriod"
+                                            },
+                                            "\" -d \"s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp/\" -l ",
+                                            {
+                                                "Ref": "PrefixLevel"
+                                            }
+                                        ]
+                                    ]
+                                }
+                            },
+                            {
+                                "Key": "runsOn",
+                                "RefValue": "StorageClassAdvisorEmrResource"
+                            },
+                            {
+                                "Key": "dependsOn",
+                                "RefValue": "PrefixStorageActivity"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "EfficiencyActivity",
+                        "Name": "EfficiencyActivity",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "ShellCommandActivity"
+                            },
+                            {
+                                "Key": "command",
+                                "StringValue": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "spark-submit --class \"org.aws.s3metrics.App\" /home/hadoop/s3metrics-assembly-0.1.20.jar -e -ps \"s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp/storage-level",
+                                            {
+                                                "Ref": "PrefixLevel"
+                                            },
+                                            "d/*/*\" -po \"s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp/ops/*\" -d \"s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp/\" -sns \"",
+                                            {
+                                                "Fn::Join": [
+                                                    "",
+                                                    [
+                                                        "arn:aws:sns:",
+                                                        {
+                                                            "Ref": "AWS::Region"
+                                                        },
+                                                        ":",
+                                                        {
+                                                            "Ref": "AWS::AccountId"
+                                                        },
+                                                        ":",
+                                                        {
+                                                            "Ref": "SNSTopicName"
+                                                        }
+                                                    ]
+                                                ]
+                                            },
+                                            "\"\n"
+                                        ]
+                                    ]
+                                }
+                            },
+                            {
+                                "Key": "runsOn",
+                                "RefValue": "StorageClassAdvisorEmrResource"
+                            },
+                            {
+                                "Key": "dependsOn",
+                                "RefValue": "OpsActivity"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "CopytoOutputActivity",
+                        "Name": "CopytoOutputActivity",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "ShellCommandActivity"
+                            },
+                            {
+                                "Key": "command",
+                                "StringValue": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "aws s3 sync s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp/ s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-output/out-$(date +\"%Y-%m-%d_%H:%M\")/\n"
+                                        ]
+                                    ]
+                                }
+                            },
+                            {
+                                "Key": "runsOn",
+                                "RefValue": "StorageClassAdvisorEmrResource"
+                            },
+                            {
+                                "Key": "dependsOn",
+                                "RefValue": "EfficiencyActivity"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "CleanOutActivity",
+                        "Name": "CleanOutActivity",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "ShellCommandActivity"
+                            },
+                            {
+                                "Key": "command",
+                                "StringValue": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "aws s3 rm s3://",
+                                            {
+                                                "Ref": "S3SCAPOCBucket"
+                                            },
+                                            "/s3SCA-out-temp --recursive\n"
+                                        ]
+                                    ]
+                                }
+                            },
+                            {
+                                "Key": "runsOn",
+                                "RefValue": "StorageClassAdvisorEmrResource"
+                            },
+                            {
+                                "Key": "dependsOn",
+                                "RefValue": "CopytoOutputActivity"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "Default",
+                        "Name": "Default",
+                        "Fields": [
+                            {
+                                "Key": "type",
+                                "StringValue": "Default"
+                            },
+                            {
+                                "Key": "scheduleType",
+                                "StringValue": "ondemand"
+                            },
+                            {
+                                "Key": "failureAndRerunMode",
+                                "StringValue": "CASCADE"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "DependsOn": [
+                "S3SCADatapipelineRole",
+                "S3SCADatapipelineResourceRole",
+                "S3SCADataPipelineInstanceProfile"
+            ]
+        },
+        "S3SCADatapipelineRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "elasticmapreduce.amazonaws.com",
+                                    "datapipeline.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyName": "S3SCA-datapipeline-policy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "cloudwatch:*",
+                                        "datapipeline:DescribeObjects",
+                                        "datapipeline:EvaluateExpression",
+                                        "dynamodb:BatchGetItem",
+                                        "dynamodb:DescribeTable",
+                                        "dynamodb:GetItem",
+                                        "dynamodb:Query",
+                                        "dynamodb:Scan",
+                                        "dynamodb:UpdateTable",
+                                        "ec2:AuthorizeSecurityGroupIngress",
+                                        "ec2:CancelSpotInstanceRequests",
+                                        "ec2:CreateSecurityGroup",
+                                        "ec2:CreateTags",
+                                        "ec2:DeleteTags",
+                                        "ec2:Describe*",
+                                        "ec2:ModifyImageAttribute",
+                                        "ec2:ModifyInstanceAttribute",
+                                        "ec2:RequestSpotInstances",
+                                        "ec2:RunInstances",
+                                        "ec2:StartInstances",
+                                        "ec2:StopInstances",
+                                        "ec2:TerminateInstances",
+                                        "ec2:AuthorizeSecurityGroupEgress",
+                                        "ec2:DeleteSecurityGroup",
+                                        "ec2:RevokeSecurityGroupEgress",
+                                        "ec2:DescribeNetworkInterfaces",
+                                        "ec2:CreateNetworkInterface",
+                                        "ec2:DeleteNetworkInterface",
+                                        "ec2:DetachNetworkInterface",
+                                        "elasticmapreduce:*",
+                                        "iam:GetInstanceProfile",
+                                        "iam:GetRole",
+                                        "iam:GetRolePolicy",
+                                        "iam:ListAttachedRolePolicies",
+                                        "iam:ListRolePolicies",
+                                        "iam:ListInstanceProfiles",
+                                        "iam:PassRole",
+                                        "rds:DescribeDBInstances",
+                                        "rds:DescribeDBSecurityGroups",
+                                        "redshift:DescribeClusters",
+                                        "redshift:DescribeClusterSecurityGroups",
+                                        "s3:CreateBucket",
+                                        "s3:DeleteObject",
+                                        "s3:Get*",
+                                        "s3:List*",
+                                        "s3:Put*",
+                                        "sdb:BatchPutAttributes",
+                                        "sdb:Select*",
+                                        "sns:GetTopicAttributes",
+                                        "sns:ListTopics",
+                                        "sns:Publish",
+                                        "sns:Subscribe",
+                                        "sns:Unsubscribe",
+                                        "sqs:CreateQueue",
+                                        "sqs:Delete*",
+                                        "sqs:GetQueue*",
+                                        "sqs:PurgeQueue",
+                                        "sqs:ReceiveMessage"
+                                    ],
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "S3SCADatapipelineResourceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyName": "S3SCA-datapipeline-resource-policy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Sid": "BasicPermissionsNeeded",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "cloudwatch:*",
+                                        "datapipeline:*",
+                                        "ec2:Describe*",
+                                        "elasticmapreduce:AddJobFlowSteps",
+                                        "elasticmapreduce:Describe*",
+                                        "elasticmapreduce:ListInstance*",
+                                        "elasticmapreduce:ModifyInstanceGroups"
+                                    ],
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                },
+                                {
+                                    "Sid": "AllowAllS3ActionsInUserFolder",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:*"
+                                    ],
+                                    "Resource": [
+                                        {
+                                            "Fn::Join": [
+                                                "",
+                                                [
+                                                    "arn:aws:s3:::",
+                                                    {
+                                                        "Ref": "S3SCAPOCBucket"
+                                                    },
+                                                    "/s3SCA-output/*"
+                                                ]
+                                            ]
+                                        },
+                                        {
+                                            "Fn::Join": [
+                                                "",
+                                                [
+                                                    "arn:aws:s3:::",
+                                                    {
+                                                        "Ref": "S3SCAPOCBucket"
+                                                    },
+                                                    "/s3SCA-out-temp/*"
+                                                ]
+                                            ]
+                                        },
+                                        {
+                                            "Fn::Join": [
+                                                "",
+                                                [
+                                                    "arn:aws:s3:::",
+                                                    {
+                                                        "Ref": "S3SCAPOCBucket"
+                                                    },
+                                                    "/*"
+                                                ]
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "Sid": "ReadOnlyPermissions",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:Get*",
+                                        "s3:List*"
+                                    ],
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "S3SCADataPipelineInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "S3SCADatapipelineResourceRole"
+                    }
+                ]
+            }
+        },
+        "S3SCAPOCBucket": {
+            "Type": "AWS::S3::Bucket",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "S3OutputBucket"
+                            },
+                            "-",
+                            "s3sca-output-",
+                            {
+                                "Ref": "AWS::AccountId"
+                            }
+                        ]
+                    ]
+                },
+                "Tags": [
+                    {
+                        "Key": "StackId",
+                        "Value": {
+                            "Ref": "AWS::StackId"
+                        }
+                    }
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "OutputBucketName": {
+            "Value": {
+                "Fn::GetAtt": [
+                    "S3SCAPOCBucket",
+                    "DomainName"
+                ]
+            },
+            "Description": "Name of the local output Amazon S3 bucket where output files are stored."
+        }
+    }
+}
